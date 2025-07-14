@@ -178,3 +178,70 @@
  - 예외를 마무리하기
  - 예외가 발생하면 WAS까지 예외가 던져지고, WAS에서 오류페이지 정보를 찾아서 다시 /error를 호출하는 과정은 너무 복잡하다
  - ExceptionResolver를 활용하면 예외가 발생했을때 이런 복잡한 과정 없이 문제를 해결할 수 있다.
+
+
+## 스프링이 제공하는 ExceptionResolver
+ - 스프링 부트가 기본으로 제공하는 ExceptionResolver는 다음과 같다
+   - HandlerExceptionResolverComposite 에 다음 순서로 등록된다
+     - 1. ExceptionHandlerResolver
+       - @ExceptionHandler를 처리한다
+     - 2. ResponseStatusException 예외
+       - Http 상태코드를 지정해준다. @ResponseStatus(value = HttpStatus.NOT_FOUND)
+       - 다음 두가지 경우를 처리한다
+         - @ResponseStatus 가 달려있는 예외
+           - ResponseStatusExceptionResovler 코드를 확인해보면 결국에 sendError() 하는것을 확인할 수 있다. 결국 WAS에서 다시 오류페이지 /error를 내부 요청한다.
+         - ResponseStatusException
+           - @ResponseStatus는 개발자가 생성한 코드에 붙일수 있지만, 개발자가 직접 생성한 코드에는 붙일수가 없다.(애노테이션을 직접 넣을수 없으니..) 조건에 따라서 동적으로 변경하는게 어렵다.
+           - 이럴땐 ResponseStatusException예외를 사용하면 된다. 
+           - throw new ResponseStatusException(HttpStatus.NOT_FOUND, "error.bad", new IllegalArgumentException("잘못된 요청입니다아?"));
+     - 3. DefaultHandlerExceptionResolver
+       - 스프링 내부 기본 예외를 처리해 준다.
+       - 파라미터 바인딩 시점에 타입이 맞지 않으면 내부에서 TypeMismatchException이 발생하는데, 이경우 예외가 발생했기 때문에 WAS 까지 올라가고 결국 500 에러가 발생한다.
+       - 바인딩은 대부분 클라이언트가 HTTP 요청을 잘못 호출해서 발생하는 문제이다. 이런경우 HTTP 상태코드 400을 사용하도록 되어 있다
+       - DefaultHandlerExceptionResolver는 오류가 500이 아니라 HTTP 상태코드 400오류로 변경한다.
+ - HandlerExceptionResolver를 직접사용하기는 복잡하다 API 오류 응답의 경우 reponse에 직접 데이터를 넣어야 해서 불편하고 번거롭다, ModelAndView를 반환하는것도 API와 맞지 않다.
+ - 이를 해결하기 위해 나온것이 @ExceptionHandler라는 매우 혁신적인 예외 처리 기능을 제공한다. 이게 ExceptionHandlerResolver 이다.
+
+
+
+## @ExceptionHandler
+ - HTML 화면 오류 vs API 오류
+ - HTML > BasicErrorController 사용하는게 편리하다.
+ - 그런데 API는 각 시스템마다 응답의 모양이 다르고, 다르게 출력해야 할 수 있따. 또한 어떤 컨트롤러냐에 따라 어떤 에러를 내려줘야하는지 아주 세밀한 제어가 필요하다.
+ - 지금까지의 BasicErrorController와 HandlerExceptionResolver를 직접 구현하는 방식으로 API 예외를 다루기 힘들다
+ - @ExceptionHandler
+   - ExceptionHandlerExceptionResolver 이다. 스프링은 ExceptionHandlerExceptionResolver를 기본으로 제공하고
+   - 기본으로 제공하는 ExceptionResolver 중에 우선순위도 가장 높다.
+
+ - @ExceptionHandler 애노테이션을 선언하고, 해당 컨트롤러 안에서 처리하고 싶은 예외를 지정해 주면 된다.
+ - 해당 컨트롤러에서 예외가 발생하여 해당 @ExceptionHandler 과 맵핑되어 있는 메서드가 호출되고, 지정한 예외 또는 그 하위 자식 클래스를 모두 처리할 수 있다.
+```
+  @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
+    @ExceptionHandler
+    public ErrorResult exHandler(Exception e) {
+        log.error("[exceptionHandler] ex", e);
+        return new ErrorResult("EX", "내부 오류");
+    }
+```
+ - 우선순위
+  - 스프링의 우선순위는 항상 자세한게 우선권을 가진다. 
+    - 예를 들자면 부모, 자식클래스가 있을경우 자식이 우선권을 갖고 부모가 다음이다.
+- 다양한 예외처리
+  - @Exception({ A.class, B.class })
+- @ExceptionHandler()
+  - 내부에 클래스가 생략될경우 파라미터에 들어간 클래스가 해당 예외처리 클래스이다.
+
+
+## @ControllerAdvice
+ - @ExceptionHandler를 사용해서 예외처리를 할 수 있었지만, 정상 코드와 예외 처리 코드가 하나의 컨트롤러에 섞여있다.
+ - 이는 @ControllerAdvice, 또는 @RestControllerAdvice를 사용하면 둘을 분리 할 수 있다.
+ - 대상으로 지정한 컨트롤러에 @ExceptionHandler, @InitBinder 기능을 부여해주는 역할을 한다.
+ - @ControllerAdvice에 대상을 지정하지 않으면 모든 컨트롤러에 적용된다(글로벌 적용)
+ - @RestControllerAdvice는 @ControllerAdvice와 같고 @ResponseBody가 추가되어있다.
+
+ - 어노테이션으로 지정하는 방법 >> RestController 컨트롤러가 적용되어 있는 클래스
+   - @RestControllerAdvice(annotations = RestController.class)
+ - 패키지 경로적용
+   - @RestControllerAdvice("org.example.controller")
+ - 직접 컨트롤러 적용
+   - @RestControllerAdvice(assignableTypes = {ControllerInteface.class, AbstractController.class})
